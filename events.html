@@ -243,150 +243,199 @@
     </button>
   </div>
 
- 
+
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, doc, onSnapshot, addDoc, collection } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getFirestore,
+    doc,
+    onSnapshot,
+    addDoc,
+    collection,
+    query,
+    where,
+    getDocs
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDz5-E1-qZ4VLcOQqmsiEh6iXIkU-8VW9o",
-  authDomain: "codex-3d806.firebaseapp.com",
-  projectId: "codex-3d806",
-  storageBucket: "codex-3d806.firebasestorage.app",
-  messagingSenderId: "376789695205",
-  appId: "1:376789695205:web:932c02c22396429455b20c"
-};  
+  const firebaseConfig = {
+    apiKey: "AIzaSyDz5-E1-qZ4VLcOQqmsiEh6iXIkU-8VW9o",
+    authDomain: "codex-3d806.firebaseapp.com",
+    projectId: "codex-3d806",
+    storageBucket: "codex-3d806.firebasestorage.app",
+    messagingSenderId: "376789695205",
+    appId: "1:376789695205:web:932c02c22396429455b20c"
+  };
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const eventRef = doc(db, "events", "currentEvent");
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const eventRef = doc(db, "events", "currentEvent");
 
-const titleEl = document.getElementById("eventTitle");
-const contentDiv = document.getElementById("content");
+  const titleEl = document.getElementById("eventTitle");
+  const contentDiv = document.getElementById("content");
 
-let username = localStorage.getItem("codex_name") || null;
-
-function askUsername() {
-  if (!username) {
-    username = prompt("Enter your name:");
-    if (username) localStorage.setItem("codex_name", username);
-  }
-}
-
-function renderEvent(data) {
-  titleEl.textContent = data.title || "CodeX Event";
-  if (!data.started) {
-    contentDiv.innerHTML = `<p class="starting-soon">⏳ Starting soon...</p>`;
-    return;
-  }
-
-  const startTime = data.startTime;
-  const now = Date.now();
-  const elapsed = Math.floor((now - startTime) / 1000); // seconds passed
-  const questionDuration = 300; // 5 min per question
-  const index = Math.floor(elapsed / questionDuration);
-  const questions = data.questions || [];
-
-  if (index >= questions.length) {
-    contentDiv.innerHTML = `<h2>🎉 Thank you for participating!</h2>`;
-    return;
-  }
-
-  const q = questions[index];
-  const remaining = questionDuration - (elapsed % questionDuration);
-
-  renderQuestion(q, index, remaining, startTime);
-}
-
-function renderQuestion(q, index, remaining, startTime) {
-  clearInterval(window.timerInterval);
-
-  contentDiv.innerHTML = `
-    <div class="question-box">
-      <strong>Question ${index + 1}:</strong><br>${q.text}
-    </div>
-    <div class="timer" id="timer">Time Left: ${formatTime(remaining)}</div>
-    <textarea id="codeArea" placeholder="Write your code here..."></textarea><br>
-    <button id="submitBtn">Submit</button>
-  `;
-
-  const timerEl = document.getElementById("timer");
-  const submitBtn = document.getElementById("submitBtn");
-
-  window.timerInterval = setInterval(() => {
-    const now = Date.now();
-    const elapsed = Math.floor((now - startTime) / 1000);
-    const currentIndex = Math.floor(elapsed / 300);
-    const rem = 300 - (elapsed % 300);
-
-    if (rem <= 0) {
-      clearInterval(window.timerInterval);
-      renderEvent({ ...window.latestEventData }); // auto move to next
-    } else {
-      timerEl.textContent = `Time Left: ${formatTime(rem)}`;
+  let username = localStorage.getItem("codex_name") || null;
+  function askUsername() {
+    if (!username) {
+      username = prompt("Enter your name:");
+      if (username) localStorage.setItem("codex_name", username);
     }
-  }, 1000);
-
-  submitBtn.addEventListener("click", async () => {
-  askUsername();
-  const code = document.getElementById("codeArea").value.trim();
-  if (!code) return alert("Please write some code first!");
-
-  // Firestore imports (if not already at top)
-  const { collection, query, where, getDocs, addDoc } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
-
-  // Check if already submitted
-  const qCheck = query(
-    collection(db, "submissions"),
-    where("name", "==", username),
-    where("questionId", "==", q.id)
-  );
-  const existing = await getDocs(qCheck);
-  if (!existing.empty) {
-    alert("❌ You’ve already submitted this question!");
-    return;
   }
 
-  // Calculate time spent in seconds
-  const now = Date.now();
-  const totalElapsed = Math.floor((now - startTime) / 1000);
-  const timeSpent = totalElapsed - (index * 300); // 5 min per question
+  // GLOBAL start time used by timers (fixes stale startTime issues)
+  let globalStartTime = null;
 
-  // Save submission
-  await addDoc(collection(db, "submissions"), {
-    name: username,
-    questionId: q.id,
-    code,
-    timeSpent,
-    timestamp: now
+  function renderEvent(data) {
+    if (!data) return;
+    // store global start time
+    globalStartTime = data.startTime || null;
+
+    titleEl.textContent = data.title || "CodeX Event";
+    if (!data.started || !globalStartTime) {
+      contentDiv.innerHTML = `<p class="starting-soon">⏳ Starting soon...</p>`;
+      return;
+    }
+
+    const now = Date.now();
+    const elapsed = Math.floor((now - globalStartTime) / 1000); // seconds passed since start
+    const questionDuration = data.questionDuration || 300;
+    const index = Math.floor(elapsed / questionDuration);
+    const questions = data.questions || [];
+
+    if (index >= questions.length) {
+      contentDiv.innerHTML = `<h2>🎉 Thank you for participating!</h2>`;
+      return;
+    }
+
+    const q = questions[index];
+    const remaining = questionDuration - (elapsed % questionDuration);
+
+    // render the current question (no startTime passed anymore)
+    renderQuestion(q, index, remaining);
+  }
+
+  function renderQuestion(q, index, remaining) {
+    // clear any existing interval
+    if (window.timerInterval) {
+      clearInterval(window.timerInterval);
+      window.timerInterval = null;
+    }
+
+    contentDiv.innerHTML = `
+      <div class="question-box">
+        <strong>Question ${index + 1}:</strong><br>${escapeHtml(q.text)}
+      </div>
+      <div class="timer" id="timer">Time Left: ${formatTime(remaining)}</div>
+      <textarea id="codeArea" placeholder="Write your code here..."></textarea><br>
+      <button id="submitBtn">Submit</button>
+    `;
+
+    const timerEl = document.getElementById("timer");
+    const submitBtn = document.getElementById("submitBtn");
+
+    // Start timer that references globalStartTime
+    window.timerInterval = setInterval(() => {
+      const now = Date.now();
+      if (!globalStartTime) return; // safety
+      const elapsed = Math.floor((now - globalStartTime) / 1000);
+      const questionDuration = window.latestEventData?.questionDuration || 300;
+      const currentIndex = Math.floor(elapsed / questionDuration);
+      const rem = questionDuration - (elapsed % questionDuration);
+
+      // If the question index has changed, clear and re-render
+      if (currentIndex !== index) {
+        clearInterval(window.timerInterval);
+        window.timerInterval = null;
+        renderEvent(window.latestEventData);
+        return;
+      }
+
+      timerEl.textContent = `Time Left: ${formatTime(rem)}`;
+    }, 1000);
+
+    // Submit handler (no dynamic imports—firestore functions imported at top)
+    submitBtn.addEventListener("click", async () => {
+      askUsername();
+      const code = document.getElementById("codeArea").value.trim();
+      if (!code) return alert("Please write some code first!");
+
+      // Check if already submitted
+      const qCheck = query(
+        collection(db, "submissions"),
+        where("name", "==", username),
+        where("questionId", "==", q.id)
+      );
+      const existing = await getDocs(qCheck);
+      if (!existing.empty) {
+        alert("❌ You’ve already submitted this question!");
+        return;
+      }
+
+      // Calculate time spent in seconds relative to globalStartTime and index
+      const nowTs = Date.now();
+      const totalElapsed = Math.floor((nowTs - globalStartTime) / 1000);
+      const questionDuration = window.latestEventData?.questionDuration || 300;
+      const timeSpent = totalElapsed - (index * questionDuration);
+
+      // Save submission
+      try {
+        await addDoc(collection(db, "submissions"), {
+          name: username,
+          questionId: q.id,
+          code,
+          timeSpent,
+          timestamp: nowTs
+        });
+      } catch (err) {
+        console.error("submission error:", err);
+        return alert("Failed to submit. Try again.");
+      }
+
+      alert(`✅ Submitted! (Time spent: ${timeSpent}s)`);
+
+      // Re-render event (timer logic will advance to next if time passed)
+      renderEvent(window.latestEventData);
+    });
+  }
+
+  function formatTime(sec) {
+    const m = String(Math.floor(sec / 60)).padStart(2, "0");
+    const s = String(sec % 60).padStart(2, "0");
+    return `${m}:${s}`;
+  }
+
+  // small helper to avoid injecting raw HTML from firestore
+  function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  // Listen for live updates
+  onSnapshot(eventRef, (snap) => {
+    if (snap.exists()) {
+      window.latestEventData = snap.data();
+      // ensure startTime is a number or null
+      if (window.latestEventData.startTime) {
+        // Firestore might store Timestamp; handle both cases
+        const st = window.latestEventData.startTime;
+        // if it's an object with toMillis (Firestore Timestamp), use toMillis
+        globalStartTime = (st && typeof st.toMillis === "function") ? st.toMillis() : st;
+        window.latestEventData.startTime = globalStartTime;
+      } else {
+        globalStartTime = null;
+      }
+
+      renderEvent(window.latestEventData);
+    } else {
+      titleEl.textContent = "No event found!";
+      contentDiv.innerHTML = `<p class="starting-soon">No scheduled event.</p>`;
+    }
   });
-
-  alert(`✅ Submitted! (Time spent: ${timeSpent}s)`);
-
-  // Move to next question automatically
-  currentIndex++;
-  renderEvent(window.latestEventData);
-});
-
-
-}
-
-function formatTime(sec) {
-  const m = String(Math.floor(sec / 60)).padStart(2, "0");
-  const s = String(sec % 60).padStart(2, "0");
-  return `${m}:${s}`;
-}
-
-onSnapshot(eventRef, (snap) => {
-  if (snap.exists()) {
-    window.latestEventData = snap.data();
-    renderEvent(snap.data());
-  } else {
-    titleEl.textContent = "No event found!";
-  }
-});
 </script>
-
 
 </body>
 </html>
