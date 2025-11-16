@@ -197,6 +197,9 @@
       <label>Event Title:</label>
       <input type="text" id="eventTitleInput" placeholder="Enter event title" />
 
+      <label>Time per Question (seconds):</label>
+      <input type="number" id="timePerQuestionInput" placeholder="e.g. 300" />
+
       <h3>Questions</h3>
       <div id="questionsContainer"></div>
       <button id="addQuestionBtn">➕ Add Question</button>
@@ -304,7 +307,7 @@
     const questionsContainer = document.getElementById("questionsContainer");
     const statusMsg = document.getElementById("statusMsg");
 
-    document.getElementById("addQuestionBtn").addEventListener("click", () => addQuestion("");
+    document.getElementById("addQuestionBtn").addEventListener("click", () => addQuestion(""));
     document.getElementById("saveEventBtn").addEventListener("click", saveEvent);
     document.getElementById("startEventBtn").addEventListener("click", startEvent);
     document.getElementById("resetEventBtn").addEventListener("click", resetEvent);
@@ -319,6 +322,7 @@
       if (snap.exists()) {
         const data = snap.data();
         titleInput.value = data.title || "";
+        document.getElementById("timePerQuestionInput").value = data.questionDuration || 300;
         questionsContainer.innerHTML = "";
         (data.questions || []).forEach(q => addQuestion(q.text));
       }
@@ -342,6 +346,8 @@
         text: t.value.trim()
       }));
 
+      const questionDuration = Number(document.getElementById("timePerQuestionInput").value) || 300;
+
       if (!title || questions.some(q => !q.text)) {
         statusMsg.textContent = "⚠️ Please fill in title and all questions.";
         return;
@@ -350,12 +356,14 @@
       await setDoc(eventRef, {
         title,
         questions,
+        questionDuration,
         started: false,
         startTime: null
       });
 
       statusMsg.textContent = "✅ Event saved successfully!";
     }
+
 
     async function startEvent() {
       await updateDoc(eventRef, {
